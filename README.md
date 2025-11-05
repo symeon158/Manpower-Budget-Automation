@@ -2,7 +2,9 @@
 
 A Streamlit app that turns raw HRMS exports into **auditable**, **parameter-driven** payroll projections and visual analytics — no macros, no manual formulas. Upload your files, set business parameters, and download clean, ready-to-share Excel outputs.
 
-> ✅ **Deployed on Streamlit:**(https://esgautomation-6lucvjswyrkv3q5eadl9op.streamlit.app/) 
+> 🚀 **Live Demo:** [View on Streamlit Cloud](https://esgautomation-6lucvjswyrkv3q5eadl9op.streamlit.app/)  
+> ✅ Deployed and maintained by **Symeon Papadopoulos**
+
 > 🐍 **Stack:** Streamlit · Pandas · NumPy · Plotly Express · XlsxWriter · python-dateutil
 
 ---
