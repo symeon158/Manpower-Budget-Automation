@@ -257,7 +257,7 @@ def compute_months_projection_25(df: pd.DataFrame, projection_date: pd.Timestamp
     # ---------- JulyPart (robust) ----------
     def _july_part(h: pd.Timestamp, sr: pd.Timestamp) -> float:
         # Coerce sr to Timestamp just in case
-        if pd.isna(sr):
+        if pd.isna(sr) or sr >= DecBonusDate:
             sr = DecBonusDate
         else:
             sr = pd.to_datetime(sr)
@@ -1142,6 +1142,65 @@ else:
     st.warning(f"⚠️ Missing one of the required columns: '{gross_col}' or '{employer_col}'")
 
 # ───────────────────────────────────────────────────────────────────────────────
+# Annual Training Cost (based on Grade)
+# Excel: IF(Grade<>"", IFS(Grade<8,25, Grade<=9,150, Grade<=13,250, Grade<=18,450, Grade<=23,500), 0)
+# ───────────────────────────────────────────────────────────────────────────────
+if "Grade" in df.columns:
+    # coerce grade robustly (handles "0,1", "19", "19.0", text etc.)
+    grade_num = pd.to_numeric(
+        df["Grade"].astype(str).str.replace(",", ".", regex=False).str.strip(),
+        errors="coerce"
+    )
+
+    df["Annual Training Cost"] = np.select(
+        [
+            grade_num.notna() & (grade_num < 8),
+            grade_num.notna() & (grade_num <= 9),
+            grade_num.notna() & (grade_num <= 13),
+            grade_num.notna() & (grade_num <= 18),
+            grade_num.notna() & (grade_num <= 23),
+        ],
+        [
+            25,
+            150,
+            250,
+            450,
+            500,
+        ],
+        default=0
+    ).astype(float)
+else:
+    st.warning("⚠️ 'Grade' column not found; cannot compute Annual Training Cost.")
+    df["Annual Training Cost"] = 0.0
+
+
+# ───────────────────────────────────────────────────────────────────────────────
+# Annual Meal Allowance / Coupons Cost
+# Rule:
+#   ΚΑΡΤΑ ΣΙΤΙΣΗΣ = 3  -> 1488
+#   ΚΑΡΤΑ ΣΙΤΙΣΗΣ = 4  -> 744
+#   else              -> 0
+# ───────────────────────────────────────────────────────────────────────────────
+meal_col = "ΚΑΡΤΑ ΣΙΤΙΣΗΣ"
+
+if meal_col in df.columns:
+    meal_val = pd.to_numeric(
+        df[meal_col].astype(str).str.replace(",", ".", regex=False).str.strip(),
+        errors="coerce"
+    )
+
+    df["Annual Meal Allowance/ Coupons Cost"] = np.select(
+        [meal_val.eq(3), meal_val.eq(4)],
+        [1488, 744],
+        default=0
+    ).astype(float)
+else:
+    st.warning(f"⚠️ '{meal_col}' column not found; setting Annual Meal Allowance/ Coupons Cost = 0.")
+    df["Annual Meal Allowance/ Coupons Cost"] = 0.0
+
+
+
+# ───────────────────────────────────────────────────────────────────────────────
 # Diagnostics (helps verify override logic)
 # ───────────────────────────────────────────────────────────────────────────────
 with st.expander("🔎 Diagnostics (first rows with booking code)"):
@@ -1163,15 +1222,15 @@ if "Hire Date" in df.columns and "Hiring Date" not in df.columns:
 final_order = [
     "Company", "Hrms Id", "Surname", "Name", "Division", "Department",
     "Job Title", "Job Property", "Grade", "Hiring Date", "Retire Date",
-    "Cost Center", "Monthly Gross Salary (Current)", "Κωδικός Κράτησης",
-    "Κωδικός Κράτησης (norm)", "Contrib Override Applied", "Contributions%",
+    "Cost Center", "Monthly Gross Salary (Current)",
+    "Contrib Override Applied", "Contributions%",
     "Monthly Employer's Contributions", "Months Projection 25",
     "FY Months Budget 26", "FY Gross Salary Projection For 25",
     "FY Employer's Contributions Projection 25",
     "Total Payroll Projection Cost 25",
     "Annual Gross Salary FY Budget 2026",
     "Annual Employer's Contributions For 2026",
-    "FY PAYROLL COST BUDGET 2026",
+    "FY PAYROLL COST BUDGET 2026", "Annual Training Cost", "Annual Meal Allowance/ Coupons Cost"
 ]
 df = drop_dup_named_cols(df)
 existing = [c for c in final_order if c in df.columns]
