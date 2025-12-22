@@ -34,6 +34,8 @@ A Streamlit app that turns raw HRMS exports into **auditable**, **parameter-driv
 - **Filters + totals**
   - Interactive **Company / Division / Department / Cost Center** filters
   - Automatic **totals row**; export as **XLSX** (filtered / filtered + totals)
+  <img width="296" height="410" alt="image" src="https://github.com/user-attachments/assets/a2e0597b-292c-4553-b075-b8283167040f" />
+
 - **New Active Hires report**
   - “Hired after threshold & still active at projection date” — with download
 - **Visual Analytics Dashboard (auto-filters)**
@@ -55,6 +57,9 @@ A Streamlit app that turns raw HRMS exports into **auditable**, **parameter-driv
 - **Average Salary Increase % for Grade 0.1**
 - **New Hires threshold** (date)
 
+<img width="323" height="756" alt="image" src="https://github.com/user-attachments/assets/bcb68b87-db60-48d9-9632-7a3ad2ac3a17" />
+
+
 ---
 
 ## 🗂️ Input Files
@@ -68,6 +73,9 @@ A Streamlit app that turns raw HRMS exports into **auditable**, **parameter-driv
 2. **CONTRIBUTIONS file** *(optional but recommended)*  
    - Columns: `Αριθμός μητρώου` (or `Hrms Id`) and `Contributions` (as %).  
    - Merged by `Hrms Id`; **override map** applied by normalized booking code.
+  
+  <img width="292" height="323" alt="image" src="https://github.com/user-attachments/assets/a3259f5d-e879-48ed-b7fe-3266f16777f6" />
+
 
 ---
 
