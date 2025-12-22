@@ -103,22 +103,7 @@ A Streamlit app that turns raw HRMS exports into **auditable**, **parameter-driv
 
 ---
 
-## ▶️ Run Locally
-
-```bash
-# 1) Clone
-git clone https://github.com/<your-username>/<your-repo>.git
-cd <your-repo>
-
-# 2) (Optional) Create & activate venv
-python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS/Linux
-source .venv/bin/activate
-
-# 3) Install
-pip install -r requirements.txt
+ments.txt
 
 # 4) Launch
 streamlit run streamlit_app.py
