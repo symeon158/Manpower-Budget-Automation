@@ -34,8 +34,6 @@ A Streamlit app that turns raw HRMS exports into **auditable**, **parameter-driv
 - **Filters + totals**
   - Interactive **Company / Division / Department / Cost Center** filters
   - Automatic **totals row**; export as **XLSX** (filtered / filtered + totals)
-  <img width="296" height="410" alt="image" src="https://github.com/user-attachments/assets/a2e0597b-292c-4553-b075-b8283167040f" />
-
 - **New Active Hires report**
   - “Hired after threshold & still active at projection date” — with download
 - **Visual Analytics Dashboard (auto-filters)**
@@ -44,6 +42,8 @@ A Streamlit app that turns raw HRMS exports into **auditable**, **parameter-driv
   - **Box plot:** Monthly Salary distribution by Grade  
   - **Bar:** Headcount by Grade  
   - **Treemap:** Company → Division → Department (size = Cost; hover = Headcount)
+
+   <img width="296" height="410" alt="image" src="https://github.com/user-attachments/assets/a2e0597b-292c-4553-b075-b8283167040f" />
 
 ---
 
