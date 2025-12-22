@@ -9,6 +9,16 @@ import io
 
 st.title("📊 Manpower Budget Automation for Alumil S.A. & Subsidiaries")
 
+
+st.set_page_config(
+    page_title="Manpower Budget Automation",
+    layout="wide",          # 👈 wide screen
+    initial_sidebar_state="expanded",
+)
+
+# your app code below...
+
+
 # ───────────────────────────────────────────────────────────────────────────────
 # Sidebar inputs
 # ───────────────────────────────────────────────────────────────────────────────
