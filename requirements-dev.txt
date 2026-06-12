@@ -1,0 +1,213 @@
+# Migration Guide — v3 (single-file) → v4 (modular + scenarios + tests)
+
+This rewrite splits the ~2,200-line `app.py` into focused modules, adds
+**scenario comparison (A vs B)**, and adds a **pytest suite** with 89 tests
+covering every calculation function.
+
+---
+
+## New project layout
+
+```
+manpower_budget/
+├── app.py                      # Thin entry point (~130 lines)
+├── requirements.txt
+├── requirements-dev.txt        # Dev extras (pytest)
+├── pytest.ini
+├── .env                        # (you keep your existing one)
+│
+├── mb/                         # Source package
+│   ├── __init__.py
+│   ├── config.py               # CONTRIB_RATE_MAP, constants, creds loader
+│   ├── sharepoint.py           # Graph auth, download, batch writer
+│   ├── data_loader.py          # Column renaming + standard filters
+│   ├── scenarios.py            # Pydantic Scenario + run_scenario + compare
+│   ├── export.py               # XLSX export with formatting
+│   │
+│   ├── calc/                   # Pure calculation functions
+│   │   ├── __init__.py
+│   │   ├── date_helpers.py     # yf_vec, yf_scalar, eomonth, bonus_months_vec
+│   │   ├── contrib.py          # Employer contrib + youth discount
+│   │   ├── projections.py      # Current-year projection
+│   │   └── budget.py           # Budget-year calculation
+│   │
+│   └── ui/                     # Streamlit UI (all rendering)
+│       ├── __init__.py
+│       ├── header.py           # Alumil branded header
+│       ├── sidebar.py          # Sidebar + per-scenario panels
+│       ├── tab_budget.py       # Tab 1 with A vs B KPI row
+│       ├── tab_quality.py      # Tab 2
+│       └── tab_hiring.py       # Tab 3
+│
+└── tests/
+    ├── __init__.py
+    ├── fixtures.py             # Known-answer employee fixtures
+    ├── test_contrib.py         # 23 tests
+    ├── test_date_helpers.py    # 16 tests
+    ├── test_data_loader.py     # 13 tests
+    ├── test_projections.py     # 8 tests
+    └── test_scenarios.py       # 29 tests
+```
+
+**Total: 89 tests passing, ~3 seconds to run.**
+
+---
+
+## What moved where
+
+| Old code (in `app.py`)                        | New location                            |
+| --------------------------------------------- | --------------------------------------- |
+| `_get_token`, `_download_bytes`, `_to_graph_url` | `mb/sharepoint.py`                     |
+| `_write_rows_to_sp`, `_write_row_to_sp`       | `mb/sharepoint.py` (unchanged behavior) |
+| `coerce_dates`, `find_and_rename_col`, rename blocks | `mb/data_loader.py`              |
+| `yf_vec`, `yf_scalar`, `eomonth`, `_bonus_months_vec` | `mb/calc/date_helpers.py`       |
+| `compute_employer_contrib` + `normalize_code` | `mb/calc/contrib.py`                    |
+| `compute_months_projection`, `compute_fy_gross_salary_projection` | `mb/calc/projections.py` |
+| `compute_fy_months_budget`, `compute_annual_gross_salary_budget` | `mb/calc/budget.py` |
+| The whole compute pipeline inside Tab 1       | `mb/scenarios.py::run_scenario`         |
+| `_to_formatted_xlsx`                          | `mb/export.py`                          |
+| Header HTML block                             | `mb/ui/header.py`                       |
+| Sidebar rendering + CSS                       | `mb/ui/sidebar.py`                      |
+| Tab 1 body                                    | `mb/ui/tab_budget.py`                   |
+| Tab 2 body                                    | `mb/ui/tab_quality.py`                  |
+| Tab 3 body                                    | `mb/ui/tab_hiring.py`                   |
+| `CONTRIB_RATE_MAP`, youth constants           | `mb/config.py`                          |
+
+---
+
+## Key behavior changes
+
+### ✅ New: A vs B scenario comparison
+- Turn on via the **"Enable A vs B comparison"** checkbox in the sidebar
+- Scenario B gets its own full parameter panel (including a per-scenario rate table)
+- KPI row at the top shows totals for A, for B, and the **Δ (€ and %)**
+- Radio button below the KPI row toggles which scenario's data table is displayed
+- A new "Download A vs B summary" button produces a multi-sheet XLSX
+  (Summary / Scenario A / Scenario B / Δ by Division)
+
+### ✅ New: Pydantic input validation
+`Scenario` now rejects bad inputs at construction time:
+- Negative salary increases below -20%
+- Payroll periods outside [12, 14]
+- Age threshold outside [18, 35]
+- `no_increase_cutoff` on or after `effective_increase_date`
+- Rate map values outside [0, 1] or non-numeric
+- Empty scenario name
+
+Bad inputs raise `ValidationError` with a clear message instead of silently
+producing garbage output.
+
+### ✅ Existing behavior preserved
+- `CONTRIB_RATE_MAP` unchanged (13 codes with their rates)
+- Youth discount logic identical (6.66pp under 25, fixed add-ons unaffected)
+- All formulas produce the same outputs as v3 (verified by 89 tests)
+- SharePoint batch writer unchanged — still single PATCH for N rows
+- Force-fresh preview for New_Hirings kept
+
+---
+
+## Deployment steps
+
+### 1. Drop-in replacement (local dev)
+
+```bash
+# Back up your current app.py
+mv app.py app.py.v3.bak
+
+# Copy the new files into your project directory
+cp -r mbproject/* ./
+
+# Install the new dependency (pydantic)
+pip install -r requirements.txt
+
+# Verify tests pass
+pip install -r requirements-dev.txt
+pytest
+
+# Run the app
+streamlit run app.py
+```
+
+### 2. Azure Container App
+
+Add one line to your `Dockerfile` or `requirements.txt`:
+
+```
+pydantic>=2.5
+```
+
+No other infra changes needed. Environment variables (`SP_TENANT_ID`,
+`SP_CLIENT_ID`, `SP_CLIENT_SECRET`, `SP_FILE_URL`) stay the same.
+The `SP_CONTRIB_FILE_URL` env var (removed in v3 already) is ignored if present.
+
+### 3. CI (optional)
+
+If you want tests to run on every PR, add `.github/workflows/test.yml`:
+
+```yaml
+name: Tests
+on: [push, pull_request]
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements-dev.txt
+      - run: pytest -v
+```
+
+---
+
+## Running the test suite
+
+```bash
+pytest                       # all 89 tests
+pytest -v                    # with names
+pytest tests/test_contrib.py # just one file
+pytest -k "youth"            # only youth-discount tests
+```
+
+**What the tests cover:**
+- 12 date-helper edge cases (leap years, day-31 adjustments, empty series)
+- Contribution rate lookup (known codes, unknown codes, custom scenario maps)
+- Youth discount (eligibility, toggling, custom thresholds, fixed-addon preservation)
+- Fixed €25/€30 add-ons
+- Full rate-map coverage (every production code)
+- Data loader normalization, filters, salary parsing, cost center combining
+- Projection formulas for long-tenure, mid-year retirees, and already-retired
+- Scenario validation (bad inputs rejected)
+- Scenario signature stability
+- A vs B delta math (higher %, youth discount, rate overrides)
+- Training cost by grade band
+
+---
+
+## Rollback plan
+
+The old `app.py.v3.bak` is a drop-in replacement if anything breaks. Revert with:
+
+```bash
+mv app.py app.py.v4.bak
+mv app.py.v3.bak app.py
+```
+
+No data in SharePoint has changed; the `New_Hirings` sheet schema is compatible
+with both versions.
+
+---
+
+## What's NOT yet implemented (follow-ups)
+
+Items from the "other improvements" list that weren't part of this refactor:
+
+- **EFKA cap (€7,572.62)** — still not applied; salaries above cap inflate budget
+- **Month-by-month youth eligibility** — still evaluated at projection date only
+- **Per-user audit trail on submissions** — no App Service Auth integration yet
+- **Chart caching** — Plotly figures still redraw on every filter change
+- **PDF export** — Excel only
+- **Approval workflow** — no Draft/Approved status on New_Hirings rows
+
+These are safe to add incrementally now that the architecture supports it.

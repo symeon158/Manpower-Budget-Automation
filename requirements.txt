@@ -1,0 +1,164 @@
+"""
+Manpower Budget — Streamlit entry point.
+
+Thin orchestrator: imports from the `mb` package, handles auth and data load,
+wires up the three tabs.
+"""
+from __future__ import annotations
+
+import hashlib
+import time
+from datetime import date, datetime
+from pathlib import Path
+
+import pandas as pd
+import requests
+import streamlit as st
+
+from mb.config import DIM_COLS, load_graph_creds_from_env
+from mb.data_loader import (apply_standard_filters, build_cost_center,
+                             coerce_dates, drop_dup_cols, normalise_columns,
+                             normalise_salary)
+from mb.scenarios import Scenario
+from mb.sharepoint import get_token, load_sp_excel
+from mb.ui.header import render_header
+from mb.ui.sidebar import (render_excel_options, render_reset_button,
+                            render_scenario_panel, render_sidebar_filters,
+                            render_sidebar_styles)
+from mb.ui.tab_budget import render_tab_budget
+from mb.ui.tab_hiring import render_tab_hiring
+from mb.ui.tab_quality import render_tab_quality
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# PAGE CONFIG
+# ════════════════════════════════════════════════════════════════════════════
+st.set_page_config(
+    page_title="Manpower Budget Automation",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ════════════════════════════════════════════════════════════════════════════
+# CREDS + AUTH
+# ════════════════════════════════════════════════════════════════════════════
+creds = load_graph_creds_from_env(Path(__file__).parent / ".env")
+missing = creds.missing()
+if missing:
+    st.error(
+        f"❌ Missing required environment variables: **{', '.join(missing)}**\n\n"
+        "Set them in your `.env` file (local) or as Container App environment variables.")
+    st.stop()
+
+try:
+    with (st.spinner("🔐 Connecting to Microsoft 365…")
+          if "sp_token" not in st.session_state else st.empty()):
+        token = get_token(creds.tenant_id, creds.client_id, creds.client_secret)
+        st.session_state["sp_token"] = token
+except requests.HTTPError as e:
+    status = e.response.status_code
+    msgs = {
+        401: "❌ 401 — SP_TENANT_ID, SP_CLIENT_ID or SP_CLIENT_SECRET is wrong.",
+        403: "❌ 403 — App is missing Files.ReadWrite permission.",
+        404: "❌ 404 — SP_FILE_URL not found.",
+    }
+    st.error(msgs.get(status, f"❌ HTTP {status}: {e.response.text[:300]}"))
+    st.stop()
+except Exception as e:
+    st.error(f"❌ Could not connect to Microsoft 365: {e}"); st.stop()
+
+# ════════════════════════════════════════════════════════════════════════════
+# SIDEBAR
+# ════════════════════════════════════════════════════════════════════════════
+render_sidebar_styles()
+render_sidebar_filters()
+
+main_sheet, main_hdr = render_excel_options(token, creds.file_url)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔀 Scenarios")
+scenarios_enabled = st.sidebar.checkbox(
+    "Enable A vs B comparison", value=False, key="scen_compare_on",
+    help="When on, Scenario B appears below Scenario A and the top KPI "
+         "row shows deltas. Turn off for a single-scenario view.")
+
+# Scenario A — always rendered
+scenario_a_defaults = {
+    "payroll_periods":          14,
+    "projection_date":          datetime(2025, 10, 1),
+    "no_increase_cutoff":       date(2025, 8, 1),
+    "effective_increase_date":  date(2026, 5, 1),
+    "salary_increase_pct":      3.0,
+    "salary_increase_pct2":     5.0,
+    "apply_youth_discount":     True,
+    "youth_threshold":          25,
+    "youth_discount_pp":        6.66,
+}
+scenario_a = render_scenario_panel("Scenario A", "sa", scenario_a_defaults)
+
+scenario_b = None
+if scenarios_enabled:
+    scenario_b_defaults = dict(scenario_a_defaults)
+    scenario_b_defaults["salary_increase_pct"] = 5.0   # start with something different
+    scenario_b = render_scenario_panel("Scenario B", "sb", scenario_b_defaults)
+
+cache_ttl_min = st.sidebar.slider("⏱️ File cache duration (min)", 1, 60, 30,
+                                    key="cache_ttl")
+render_reset_button()
+
+# ════════════════════════════════════════════════════════════════════════════
+# LOAD + PROCESS MAIN FILE  (scenario-independent part)
+# ════════════════════════════════════════════════════════════════════════════
+_param_sig = hashlib.md5(str((
+    creds.file_url, main_sheet, main_hdr, scenario_a.projection_date,
+)).encode()).hexdigest()
+
+if st.session_state.get("df_cache_key") != _param_sig:
+    with st.spinner("⚙️ Loading source data…"):
+        try:
+            df_raw = load_sp_excel(token, creds.file_url, sheet_name=main_sheet,
+                                    header_row=main_hdr, ttl_min=cache_ttl_min)
+        except Exception as e:
+            st.error(f"❌ Failed to load file: {e}"); st.stop()
+
+        df = normalise_columns(df_raw)
+        df = coerce_dates(df)
+        df = apply_standard_filters(df, scenario_a.projection_date)
+        df = normalise_salary(df)
+        df = build_cost_center(df)
+        df = drop_dup_cols(df)
+
+        filter_opts = {
+            dim: sorted(df[dim].dropna().astype(str).str.strip().unique().tolist())
+            for dim in DIM_COLS if dim in df.columns
+        }
+        first_time = "_filter_opts" not in st.session_state
+        st.session_state["_df_precontrib"] = df
+        st.session_state["_filter_opts"]   = filter_opts
+        st.session_state["_booking_col"]   = "Κωδικός Κράτησης"
+        st.session_state["df_cache_key"]   = _param_sig
+        st.session_state["last_loaded_ts"] = time.strftime("%H:%M:%S")
+        if first_time:
+            st.rerun()
+
+booking_col = st.session_state["_booking_col"]
+
+# ════════════════════════════════════════════════════════════════════════════
+# HEADER + TABS
+# ════════════════════════════════════════════════════════════════════════════
+render_header(st.session_state.get("last_loaded_ts", "—"))
+tab_budget, tab_quality, tab_hiring = st.tabs(
+    ["📊 Budget & Analytics", "🔍 Data Quality", "➕ New Hiring Request"])
+
+with tab_budget:
+    render_tab_budget(scenario_a, scenario_b, cache_ttl_min)
+
+# For quality + hiring we need df_data from Scenario A
+from mb.scenarios import run_scenario
+df_a, cols_a = run_scenario(st.session_state["_df_precontrib"], scenario_a)
+
+with tab_quality:
+    render_tab_quality(df_a, booking_col, scenario_a)
+
+with tab_hiring:
+    render_tab_hiring(df_a, token, creds.file_url, cache_ttl_min, _param_sig)
