@@ -1,86 +1,83 @@
-"""Tests for date helpers: yf_scalar, yf_vec, eomonth."""
-from __future__ import annotations
+# Manpower Budget Automation
 
-import numpy as np
-import pandas as pd
-import pytest
+Internal Streamlit application that automates the annual manpower budget process at **Alumil S.A.** Reads and writes live to SharePoint via the Microsoft Graph API, computes payroll projections under Greek EFKA rules, and supports side-by-side scenario comparison.
 
-from mb.calc.date_helpers import eomonth, roundup, yf_scalar, yf_vec
+---
 
+## Quick start
 
-class TestEomonth:
-    def test_end_of_current_month(self):
-        assert eomonth(pd.Timestamp(2025, 5, 15), 0) == pd.Timestamp(2025, 5, 31)
+```bash
+# 1. Configure credentials
+cp .env.example .env
+# Fill in SP_TENANT_ID, SP_CLIENT_ID, SP_CLIENT_SECRET, SP_FILE_URL
 
-    def test_feb_non_leap(self):
-        assert eomonth(pd.Timestamp(2025, 2, 1), 0) == pd.Timestamp(2025, 2, 28)
+# 2. Install
+pip install -r requirements.txt
 
-    def test_feb_leap(self):
-        assert eomonth(pd.Timestamp(2024, 2, 1), 0) == pd.Timestamp(2024, 2, 29)
+# 3. Run
+streamlit run app.py
+```
 
-    def test_forward_month(self):
-        assert eomonth(pd.Timestamp(2025, 5, 15), 2) == pd.Timestamp(2025, 7, 31)
+## What it does
 
-    def test_year_rollover(self):
-        assert eomonth(pd.Timestamp(2025, 11, 15), 3) == pd.Timestamp(2026, 2, 28)
+- **Tab 1 — Budget & Analytics:** FY projection + budget calculation with A vs B scenario comparison, KPI deltas, filterable employee table, 8 Plotly dashboards, XLSX export
+- **Tab 2 — Data Quality:** flags missing rates, unmatched `Κωδικός Κράτησης` codes, zero/missing salaries, salary outliers, lists employees getting the under-25 discount
+- **Tab 3 — New Hiring Request:** cascading form (Division → Department → Job → Pay Band) that writes structured rows directly to the `New_Hirings` sheet in SharePoint
 
-    def test_nat_returns_nat(self):
-        assert pd.isna(eomonth(pd.NaT))
+## Payroll rules implemented
 
+- **13-code contribution rate lookup** keyed on `Κωδικός Κράτησης`, with €25/€30 fixed monthly add-ons
+- **Under-25 employer-contribution discount** (Ν.4583/2018 — 6.66pp reduction on main pension)
+- **30/360 calendar** with Easter / Summer / Christmas bonus rules, Christmas period capped at 1.0
+- **Grade-aware salary increases** with configurable cutoff & effective dates
+- **Cost columns gated** on active months: zero when employee is inactive in that period
 
-class TestYfScalar:
-    def test_one_full_year(self):
-        # 30/360 from Jan 1 to Dec 31 → 360/360 = 1.0 ... almost
-        # Actually 30*(12-1) + (31-1) with 31→30 adjustment: 330 + 30 = 360, but d2=31,d1=1 → d2 stays 31
-        # Let's test explicit easy case
-        result = yf_scalar(pd.Timestamp(2025, 1, 1), pd.Timestamp(2026, 1, 1))
-        assert result == pytest.approx(1.0, abs=1e-6)
+## Project layout
 
-    def test_half_year(self):
-        result = yf_scalar(pd.Timestamp(2025, 1, 1), pd.Timestamp(2025, 7, 1))
-        assert result == pytest.approx(0.5, abs=1e-6)
+```
+app.py                  Thin Streamlit orchestrator
+mb/
+├── config.py           Constants + Graph credentials loader
+├── scenarios.py        Pydantic Scenario + run_scenario()
+├── sharepoint.py       Graph auth + batch row writer
+├── data_loader.py      Excel column normalisation
+├── pay_ranges.py       Pay-band table
+├── export.py           XLSX export with formatting
+├── calc/               date_helpers, contrib, projections, budget
+└── ui/                 header, sidebar, three tabs
 
-    def test_same_day_zero(self):
-        assert yf_scalar(pd.Timestamp(2025, 6, 15), pd.Timestamp(2025, 6, 15)) == 0.0
+tests/                  106 unit tests (pytest)
+```
 
-    def test_day_31_adjustment(self):
-        # Excel convention: if d1=31, treat as 30
-        # Jan 31 → Feb 28: raw would be 30*1 + (28-31) = 27; with d1 adjust: 30 + (28-30) = 28
-        result = yf_scalar(pd.Timestamp(2025, 1, 31), pd.Timestamp(2025, 2, 28))
-        assert result == pytest.approx(28.0 / 360.0, abs=1e-6)
+## Running the tests
 
-    def test_nan_propagates(self):
-        assert pd.isna(yf_scalar(pd.NaT, pd.Timestamp(2025, 1, 1)))
-        assert pd.isna(yf_scalar(pd.Timestamp(2025, 1, 1), pd.NaT))
+```bash
+pip install -r requirements-dev.txt
+pytest                    # 106 tests, ~3s
+pytest -k "youth"         # filter by keyword
+```
 
+## Configuration
 
-class TestYfVec:
-    def test_matches_scalar_version(self):
-        starts = pd.Series([pd.Timestamp(2025, 1, 1), pd.Timestamp(2025, 6, 15),
-                             pd.Timestamp(2024, 3, 10)])
-        ends   = pd.Series([pd.Timestamp(2025, 7, 1), pd.Timestamp(2026, 6, 15),
-                             pd.Timestamp(2025, 3, 10)])
-        vec    = yf_vec(starts, ends)
-        for i in range(len(starts)):
-            assert vec.iloc[i] == pytest.approx(
-                yf_scalar(starts.iloc[i], ends.iloc[i]), abs=1e-6)
+| Environment variable | Purpose |
+|---|---|
+| `SP_TENANT_ID` | Azure AD tenant ID |
+| `SP_CLIENT_ID` | App registration client ID |
+| `SP_CLIENT_SECRET` | App registration client secret |
+| `SP_FILE_URL` | SharePoint URL of `ManpowerBudget.xlsx` |
 
-    def test_preserves_index(self):
-        starts = pd.Series([pd.Timestamp(2025, 1, 1)], index=["emp_x"])
-        ends   = pd.Series([pd.Timestamp(2025, 7, 1)], index=["emp_x"])
-        result = yf_vec(starts, ends)
-        assert result.index.tolist() == ["emp_x"]
+The Azure AD app needs **Files.ReadWrite** (Application) permission on the target OneDrive.
 
-    def test_empty_series(self):
-        result = yf_vec(pd.Series([], dtype="datetime64[ns]"),
-                         pd.Series([], dtype="datetime64[ns]"))
-        assert len(result) == 0
+To change contribution rates, edit `CONTRIB_RATE_MAP` in `mb/config.py`. To change pay bands, edit `PAY_RANGES_ROWS` in `mb/pay_ranges.py`. Both are covered by unit tests that will catch malformed updates.
 
+## Deployment
 
-class TestRoundup:
-    def test_basic_roundup(self):
-        assert roundup(1.21, 1) == pytest.approx(1.3, abs=1e-6)
-        assert roundup(1.20, 1) == pytest.approx(1.2, abs=1e-6)
+Built as a Docker image and deployed on **Azure Container Apps**. Environment variables are injected via Container App secrets — never baked into the image.
 
-    def test_nan_returns_nan(self):
-        assert pd.isna(roundup(np.nan, 1))
+## Stack
+
+Python · Streamlit · pandas · NumPy · Plotly · Pydantic · Microsoft Graph API · Azure AD · Docker · Azure Container Apps · pytest
+
+## License
+
+Proprietary — Alumil S.A. Not licensed for redistribution.
